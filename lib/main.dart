@@ -8,6 +8,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -739,48 +740,69 @@ class _CandyHarborPageState extends State<CandyHarborPage>
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark,
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        body: Stack(
-          children: [
-            if (coverVisible)
-              const CandyTextLoader()
-            else
-              Container(
-                color: Colors.white,
-                child: Stack(
-                  children: [
-                    InAppWebView(
-                      initialSettings: InAppWebViewSettings(
-                        javaScriptEnabled: true,
-                        disableDefaultErrorPage: true,
-                        mediaPlaybackRequiresUserGesture: false,
-                        allowsInlineMediaPlayback: true,
-                        allowsPictureInPictureMediaPlayback: true,
-                        useOnDownloadStart: true,
-                        javaScriptCanOpenWindowsAutomatically: true,
-                        useShouldOverrideUrlLoading: true,
-                        supportMultipleWindows: true,
-                        transparentBackground: false,
-                      ),
-                      initialUrlRequest:
-                      URLRequest(url: WebUri(candyHomeUrl)),
-                      onWebViewCreated: (controller) {
-                        candyWebController = controller;
-
-                        candyCargoModel ??= CandyCargoModel(
-                          candyDevice: candyDeviceProfile,
-                          candyAdvisor: candyAdvisor,
-                        );
-                        candyPorter ??= CandyPorter(
-                          candyCargoModel: candyCargoModel!,
-                          candyPickWebController: () => candyWebController,
-                        );
-
-                        candyWebController.addJavaScriptHandler(
-                          handlerName: 'onServerResponse',
-                          callback: (args) {
-                            if (serverResponseHandled) {
+      child: SafeArea(
+        child: Scaffold(
+          backgroundColor: Colors.white,
+          body: Stack(
+            children: [
+              if (coverVisible)
+                const CandyTextLoader()
+              else
+                Container(
+                  color: Colors.white,
+                  child: Stack(
+                    children: [
+                      InAppWebView(
+                        initialSettings: InAppWebViewSettings(
+                          javaScriptEnabled: true,
+                          disableDefaultErrorPage: true,
+                          mediaPlaybackRequiresUserGesture: false,
+                          allowsInlineMediaPlayback: true,
+                          allowsPictureInPictureMediaPlayback: true,
+                          useOnDownloadStart: true,
+                          javaScriptCanOpenWindowsAutomatically: true,
+                          useShouldOverrideUrlLoading: true,
+                          supportMultipleWindows: true,
+                          transparentBackground: false,
+                        ),
+                        initialUrlRequest:
+                        URLRequest(url: WebUri(candyHomeUrl)),
+                        onWebViewCreated: (controller) {
+                          candyWebController = controller;
+        
+                          candyCargoModel ??= CandyCargoModel(
+                            candyDevice: candyDeviceProfile,
+                            candyAdvisor: candyAdvisor,
+                          );
+                          candyPorter ??= CandyPorter(
+                            candyCargoModel: candyCargoModel!,
+                            candyPickWebController: () => candyWebController,
+                          );
+        
+                          candyWebController.addJavaScriptHandler(
+                            handlerName: 'onServerResponse',
+                            callback: (args) {
+                              if (serverResponseHandled) {
+                                if (args.isEmpty) return null;
+                                try {
+                                  return args.reduce(
+                                          (curr, next) => curr + next);
+                                } catch (_) {
+                                  return args.first;
+                                }
+                              }
+                              try {
+                                final saved = args.isNotEmpty &&
+                                    args[0] is Map &&
+                                    args[0]['savedata'].toString() == "false";
+        
+                                print("datasaved " +
+                                    args[0]['savedata'].toString());
+                                if (saved && !serverResponseHandled) {
+                                  serverResponseHandled = true;
+        
+                                }
+                              } catch (_) {}
                               if (args.isEmpty) return null;
                               try {
                                 return args.reduce(
@@ -788,228 +810,209 @@ class _CandyHarborPageState extends State<CandyHarborPage>
                               } catch (_) {
                                 return args.first;
                               }
+                            },
+                          );
+                        },
+                        onLoadStart: (controller, url) async {
+                          setState(() {
+                            pageLoadStartTs =
+                                DateTime.now().millisecondsSinceEpoch;
+                            candyBusyFlag = true;
+                          });
+                          if (url != null) {
+                            if (isBareEmailUri(url)) {
+                              try {
+                                await controller.stopLoading();
+                              } catch (_) {}
+                              final mailto = convertToMailto(url);
+                              await openMailInExternal(mailto);
+                              return;
                             }
-                            try {
-                              final saved = args.isNotEmpty &&
-                                  args[0] is Map &&
-                                  args[0]['savedata'].toString() == "false";
-
-                              print("datasaved " +
-                                  args[0]['savedata'].toString());
-                              if (saved && !serverResponseHandled) {
-                                serverResponseHandled = true;
-
-                              }
-                            } catch (_) {}
-                            if (args.isEmpty) return null;
-                            try {
-                              return args.reduce(
-                                      (curr, next) => curr + next);
-                            } catch (_) {
-                              return args.first;
+                            final sch = url.scheme.toLowerCase();
+                            if (sch != 'http' && sch != 'https') {
+                              try {
+                                await controller.stopLoading();
+                              } catch (_) {}
                             }
-                          },
-                        );
-                      },
-                      onLoadStart: (controller, url) async {
-                        setState(() {
-                          pageLoadStartTs =
+                          }
+                        },
+                        onLoadError:
+                            (controller, url, code, message) async {
+                          final now =
                               DateTime.now().millisecondsSinceEpoch;
-                          candyBusyFlag = true;
-                        });
-                        if (url != null) {
-                          if (isBareEmailUri(url)) {
-                            try {
-                              await controller.stopLoading();
-                            } catch (_) {}
-                            final mailto = convertToMailto(url);
+                          final ev =
+                              "InAppWebViewError(code=$code, message=$message)";
+                          await sendCandyStat(
+                            event: ev,
+                            timeStart: now,
+                            timeFinish: now,
+                            url: url?.toString() ?? '',
+                            appCarrot: candyAdvisor.candyAfUserId,
+                            firstPageLoadTs: firstPageTs,
+                          );
+                          if (mounted) setState(() => candyBusyFlag = false);
+                        },
+                        onReceivedHttpError: (controller, request, errorResponse) async {
+                          final now =
+                              DateTime.now().millisecondsSinceEpoch;
+                          final ev =
+                              "HTTPError(status=${errorResponse.statusCode}, reason=${errorResponse.reasonPhrase})";
+                          await sendCandyStat(
+                            event: ev,
+                            timeStart: now,
+                            timeFinish: now,
+                            url: request.url?.toString() ?? '',
+                            appCarrot: candyAdvisor.candyAfUserId,
+                            firstPageLoadTs: firstPageTs,
+                          );
+                        },
+                        onReceivedError: (controller, request, error) async {
+                          final now =
+                              DateTime.now().millisecondsSinceEpoch;
+                          final desc = (error.description ?? '').toString();
+                          final ev =
+                              "WebResourceError(code=${error}, message=$desc)";
+                          await sendCandyStat(
+                            event: ev,
+                            timeStart: now,
+                            timeFinish: now,
+                            url: request.url?.toString() ?? '',
+                            appCarrot: candyAdvisor.candyAfUserId,
+                            firstPageLoadTs: firstPageTs,
+                          );
+                        },
+                        onLoadStop: (controller, url) async {
+                          await controller.evaluateJavascript(
+                              source: "console.log('Bunny Harbor up!');");
+        
+                          final urlStr = url?.toString() ?? '';
+                          setState(() => currentUrlString = urlStr);
+        
+                          await pushDeviceToWeb();
+        
+                          if (urlStr.isNotEmpty &&
+                              afPushedForUrl[urlStr] != true) {
+                            afPushedForUrl[urlStr] = true;
+                            await pushAppsFlyerData(currentUrl: urlStr);
+                          }
+        
+                          Future.delayed(const Duration(seconds: 20), () {
+                            sendLoadedOnce(
+                              url: currentUrlString.toString(),
+                              timestart: pageLoadStartTs,
+                            );
+                          });
+        
+                          if (mounted) setState(() => candyBusyFlag = false);
+                        },
+                        shouldOverrideUrlLoading:
+                            (controller, navAction) async {
+                          final uri = navAction.request.url;
+                          if (uri == null) {
+                            return NavigationActionPolicy.ALLOW;
+                          }
+        
+                          if (isBareEmailUri(uri)) {
+                            final mailto = convertToMailto(uri);
                             await openMailInExternal(mailto);
-                            return;
+                            return NavigationActionPolicy.CANCEL;
                           }
-                          final sch = url.scheme.toLowerCase();
+        
+                          final sch = uri.scheme.toLowerCase();
+        
+                          if (sch == 'mailto') {
+                            await openMailInExternal(uri);
+                            return NavigationActionPolicy.CANCEL;
+                          }
+        
+                          if (sch == 'tel') {
+                            await openExternal(uri);
+                            return NavigationActionPolicy.CANCEL;
+                          }
+        
+                          if (isPlatformishUri(uri)) {
+                            final web = convertToHttpPlatformUri(uri);
+                            if (web.scheme == 'http' ||
+                                web.scheme == 'https') {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      CandyDeckPage(web.toString()),
+                                ),
+                              );
+                            } else {
+                              await openExternal(uri);
+                            }
+                            return NavigationActionPolicy.CANCEL;
+                          }
+        
                           if (sch != 'http' && sch != 'https') {
-                            try {
-                              await controller.stopLoading();
-                            } catch (_) {}
+                            return NavigationActionPolicy.CANCEL;
                           }
-                        }
-                      },
-                      onLoadError:
-                          (controller, url, code, message) async {
-                        final now =
-                            DateTime.now().millisecondsSinceEpoch;
-                        final ev =
-                            "InAppWebViewError(code=$code, message=$message)";
-                        await sendCandyStat(
-                          event: ev,
-                          timeStart: now,
-                          timeFinish: now,
-                          url: url?.toString() ?? '',
-                          appCarrot: candyAdvisor.candyAfUserId,
-                          firstPageLoadTs: firstPageTs,
-                        );
-                        if (mounted) setState(() => candyBusyFlag = false);
-                      },
-                      onReceivedHttpError: (controller, request, errorResponse) async {
-                        final now =
-                            DateTime.now().millisecondsSinceEpoch;
-                        final ev =
-                            "HTTPError(status=${errorResponse.statusCode}, reason=${errorResponse.reasonPhrase})";
-                        await sendCandyStat(
-                          event: ev,
-                          timeStart: now,
-                          timeFinish: now,
-                          url: request.url?.toString() ?? '',
-                          appCarrot: candyAdvisor.candyAfUserId,
-                          firstPageLoadTs: firstPageTs,
-                        );
-                      },
-                      onReceivedError: (controller, request, error) async {
-                        final now =
-                            DateTime.now().millisecondsSinceEpoch;
-                        final desc = (error.description ?? '').toString();
-                        final ev =
-                            "WebResourceError(code=${error}, message=$desc)";
-                        await sendCandyStat(
-                          event: ev,
-                          timeStart: now,
-                          timeFinish: now,
-                          url: request.url?.toString() ?? '',
-                          appCarrot: candyAdvisor.candyAfUserId,
-                          firstPageLoadTs: firstPageTs,
-                        );
-                      },
-                      onLoadStop: (controller, url) async {
-                        await controller.evaluateJavascript(
-                            source: "console.log('Bunny Harbor up!');");
-
-                        final urlStr = url?.toString() ?? '';
-                        setState(() => currentUrlString = urlStr);
-
-                        await pushDeviceToWeb();
-
-                        if (urlStr.isNotEmpty &&
-                            afPushedForUrl[urlStr] != true) {
-                          afPushedForUrl[urlStr] = true;
-                          await pushAppsFlyerData(currentUrl: urlStr);
-                        }
-
-                        Future.delayed(const Duration(seconds: 20), () {
-                          sendLoadedOnce(
-                            url: currentUrlString.toString(),
-                            timestart: pageLoadStartTs,
-                          );
-                        });
-
-                        if (mounted) setState(() => candyBusyFlag = false);
-                      },
-                      shouldOverrideUrlLoading:
-                          (controller, navAction) async {
-                        final uri = navAction.request.url;
-                        if (uri == null) {
+        
                           return NavigationActionPolicy.ALLOW;
-                        }
-
-                        if (isBareEmailUri(uri)) {
-                          final mailto = convertToMailto(uri);
-                          await openMailInExternal(mailto);
-                          return NavigationActionPolicy.CANCEL;
-                        }
-
-                        final sch = uri.scheme.toLowerCase();
-
-                        if (sch == 'mailto') {
-                          await openMailInExternal(uri);
-                          return NavigationActionPolicy.CANCEL;
-                        }
-
-                        if (sch == 'tel') {
-                          await openExternal(uri);
-                          return NavigationActionPolicy.CANCEL;
-                        }
-
-                        if (isPlatformishUri(uri)) {
-                          final web = convertToHttpPlatformUri(uri);
-                          if (web.scheme == 'http' ||
-                              web.scheme == 'https') {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    CandyDeckPage(web.toString()),
-                              ),
-                            );
-                          } else {
-                            await openExternal(uri);
+                        },
+                        onCreateWindow: (controller, req) async {
+                          final uri = req.request.url;
+                          if (uri == null) return false;
+        
+                          if (isBareEmailUri(uri)) {
+                            final mailto = convertToMailto(uri);
+                            await openMailInExternal(mailto);
+                            return false;
                           }
-                          return NavigationActionPolicy.CANCEL;
-                        }
-
-                        if (sch != 'http' && sch != 'https') {
-                          return NavigationActionPolicy.CANCEL;
-                        }
-
-                        return NavigationActionPolicy.ALLOW;
-                      },
-                      onCreateWindow: (controller, req) async {
-                        final uri = req.request.url;
-                        if (uri == null) return false;
-
-                        if (isBareEmailUri(uri)) {
-                          final mailto = convertToMailto(uri);
-                          await openMailInExternal(mailto);
-                          return false;
-                        }
-
-                        final sch = uri.scheme.toLowerCase();
-
-                        if (sch == 'mailto') {
-                          await openMailInExternal(uri);
-                          return false;
-                        }
-
-                        if (sch == 'tel') {
-                          await openExternal(uri);
-                          return false;
-                        }
-
-                        if (isPlatformishUri(uri)) {
-                          final web = convertToHttpPlatformUri(uri);
-                          if (web.scheme == 'http' ||
-                              web.scheme == 'https') {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    CandyDeckPage(web.toString()),
-                              ),
-                            );
-                          } else {
+        
+                          final sch = uri.scheme.toLowerCase();
+        
+                          if (sch == 'mailto') {
+                            await openMailInExternal(uri);
+                            return false;
+                          }
+        
+                          if (sch == 'tel') {
                             await openExternal(uri);
+                            return false;
+                          }
+        
+                          if (isPlatformishUri(uri)) {
+                            final web = convertToHttpPlatformUri(uri);
+                            if (web.scheme == 'http' ||
+                                web.scheme == 'https') {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      CandyDeckPage(web.toString()),
+                                ),
+                              );
+                            } else {
+                              await openExternal(uri);
+                            }
+                            return false;
+                          }
+        
+                          if (sch == 'http' || sch == 'https') {
+                            controller.loadUrl(
+                              urlRequest: URLRequest(url: uri),
+                            );
                           }
                           return false;
-                        }
-
-                        if (sch == 'http' || sch == 'https') {
-                          controller.loadUrl(
-                            urlRequest: URLRequest(url: uri),
-                          );
-                        }
-                        return false;
-                      },
-                      onDownloadStartRequest:
-                          (controller, req) async {
-                        await openExternal(req.url);
-                      },
-                    ),
-                    Visibility(
-                      visible: !veilHidden,
-                      child: const CandyTextLoader(),
-                    ),
-                  ],
+                        },
+                        onDownloadStartRequest:
+                            (controller, req) async {
+                          await openExternal(req.url);
+                        },
+                      ),
+                      Visibility(
+                        visible: !veilHidden,
+                        child: const CandyTextLoader(),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
